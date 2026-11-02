@@ -1,0 +1,895 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src data:; img-src 'self' data:; connect-src 'self'" />
+  <title>LUFS Meter</title>
+  <link rel="stylesheet" href="fonts/plex.css" />
+  <style>
+    /* The look of the Nano Cortex Editor: black, IBM Plex Sans, light filled controls, segmented boxes, round chips. */
+    :root {
+      --bg: #000000;
+      --text: #f2f2f2;
+      --muted: #8e9297;
+      --accent: #e9e9e9;
+      --green: #45F862;
+      --r-control: 9px; --r-panel: 12px; --r-card: 16px; --r-dialog: 18px;
+      --ico-close: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><g fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><path d='M6 6l12 12M18 6L6 18'/></g></svg>");
+      --ico-restart: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><g fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><path d='M4 12a8 8 0 1 0 2.4-5.7'/><path d='M4 4v4.5h4.5'/></g></svg>");
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", sans-serif;
+      font-variant-numeric: tabular-nums;
+      background: radial-gradient(circle at top, #161616 0%, #000000 60%) fixed, #000;
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+    }
+    [hidden] { display: none !important; }
+    button, select, input { font: inherit; }
+    button {
+      background: linear-gradient(180deg, #191b1d, #111315);
+      color: var(--text);
+      border: 1px solid #3a3d40;
+      border-radius: var(--r-control);
+      padding: 10px 18px;
+      cursor: pointer;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+    }
+    button:hover { border-color: var(--accent); }
+    button:disabled { opacity: .45; cursor: default; border-color: #3a3d40; }
+    button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid rgba(69, 248, 98, .85); outline-offset: 2px; }
+    button.primary { background: #ececec; border-color: #ececec; color: #0d0f11; }
+    button.primary:hover { background: #fff; border-color: #fff; }
+    select { background: #111315; color: var(--text); border: 1px solid #3a3d40; border-radius: var(--r-control); padding: 9px 12px; outline: none; font-size: 13px; }
+    select:focus { border-color: var(--accent); }
+    .ico { display: inline-block; width: 18px; height: 18px; flex: none; background: currentColor;
+           -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat; }
+
+    .toggle-switch { width: 46px; height: 24px; flex: none; border-radius: 999px; border: 1px solid #3a3f45; background: #1a1d20; padding: 2px; cursor: pointer;
+                     display: flex; align-items: center; justify-content: flex-start; transition: background .15s, border-color .15s; }
+    .toggle-switch.on { justify-content: flex-end; background: #f2f2f2; border-color: #f2f2f2; }
+    .toggle-dot { width: 18px; height: 18px; border-radius: 50%; background: #7d8287; }
+    .toggle-switch.on .toggle-dot { background: #0d0f11; box-shadow: 0 1px 3px rgba(0, 0, 0, .4); }
+
+    /* segmented control: one frame, the active segment filled light */
+    .seg-box { display: inline-flex; align-items: stretch; height: 40px; flex: none; border: 1px solid #3a3d40; border-radius: 10px;
+               background: linear-gradient(180deg, #191b1d, #111315); }
+    .seg-box:hover { border-color: var(--accent); }
+    .seg-box .seg { display: grid; place-items: center; padding: 0 14px; border: 0; border-radius: 0; background: transparent; color: #d6d6d6; font-size: 13px; letter-spacing: 0; }
+    .seg-box .seg:first-child { border-radius: 9px 0 0 9px; }
+    .seg-box .seg:last-child { border-radius: 0 9px 9px 0; }
+    .seg-box > * + * { border-left: 1px solid #2b2f33; }
+    .seg-box .seg:hover { color: #fff; }
+    .seg-box .seg.on { background: #ececec; color: #0d0f11; }
+
+    .eyebrow { font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); }
+    .hint { color: #9aa0a6; font-size: 12.5px; line-height: 1.5; }
+    .hint.error { color: #ff8c8c; }
+    .link { padding: 0; border: 0; background: none; color: #8e9297; font-size: 12px; font-weight: 500; text-decoration: underline; text-underline-offset: 3px; }
+    .link:hover { color: #fff; }
+
+    /* ---------- top bar ---------- */
+    .topbar { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 10px 14px; min-height: 66px; padding: 12px 24px; border-bottom: 1px solid #171717;
+              background: rgba(8, 9, 10, .78); backdrop-filter: blur(20px) saturate(1.4); -webkit-backdrop-filter: blur(20px) saturate(1.4); }
+    .brand { display: grid; grid-template-columns: 30px auto; grid-template-rows: auto auto; column-gap: 10px; align-items: center; flex: 1 1 auto; min-width: 0; }
+    .brand-mark { grid-row: 1 / 3; width: 30px; height: 30px; border-radius: 7px; background: linear-gradient(180deg, #2b2b2b, #080808); box-shadow: inset 0 0 0 1px rgba(255,255,255,.08);
+                  display: grid; place-items: center; }
+    .brand-mark svg { width: 24px; height: 24px; }
+    .brand h1 { margin: 0; font-size: 14px; font-weight: 650; line-height: 1.2; white-space: nowrap; }
+    .brand-sub { color: var(--muted); font-size: 11.5px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .source { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    #input { width: 230px; min-width: 0; flex: 0 1 auto; }
+    #pair { width: auto; flex: none; }
+    .tool-sep { width: 1px; height: 26px; background: #2b2f33; margin: 0 2px; flex: none; }
+    html.app .topbar { padding-left: 90px; -webkit-app-region: drag; }
+    html.app.fullscreen .topbar { padding-left: 24px; }
+    html.app .topbar :is(button, select, input, .toggle-switch, .seg-box) { -webkit-app-region: no-drag; }
+
+    /* ---------- page ---------- */
+    .page { max-width: 1040px; margin: 0 auto; padding: 22px 24px 36px; display: grid; gap: 18px; }
+    .card { border: 1px solid #24282c; border-radius: var(--r-card); background: rgba(14, 16, 18, .92); box-shadow: 0 18px 50px rgba(0, 0, 0, .45); padding: 18px 20px; }
+    .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
+    .card-head h3 { margin: 0; font-size: 15px; font-weight: 650; }
+    .notice { display: flex; align-items: center; gap: 14px; padding: 14px 18px; border: 1px solid #2c3035; border-radius: var(--r-panel); background: #111315; }
+    .notice.error { border-color: #5a2a26; }
+    .notice .hint { flex: 1 1 auto; }
+
+    .hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
+    .big { display: flex; align-items: baseline; gap: 10px; margin: 8px 0 4px; }
+    .big strong { font-size: 64px; font-weight: 600; line-height: 1; letter-spacing: -.02em; }
+    .big em { font-style: normal; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 16px; }
+    .chip { display: inline-flex; align-items: baseline; gap: 6px; height: 26px; padding: 0 11px; line-height: 24px; border: 1px solid #2c3035; border-radius: 999px; background: #121416;
+            color: #9aa0a6; font-size: 12px; white-space: nowrap; }
+    .chip b { color: #f2f2f2; font-weight: 650; }
+    .chip.clip { border-color: #ff5a4d; background: #ff5a4d; color: #1a0503; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+
+    .lv-meter { display: grid; gap: 7px; padding: 14px 14px 8px; border: 1px solid #24282c; border-radius: 12px; background: #0c0d0f; }
+    .lv-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) 84px; align-items: center; gap: 10px; }
+    .lv-ch { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: #8e9297; }
+    .lv-bar { position: relative; height: 12px; border-radius: 4px; background: #1d2024; overflow: hidden; }
+    .lv-bar i { position: absolute; inset: 0; background: linear-gradient(to right, #45F862 0, #45F862 70%, #f2d14b 70%, #f2d14b 90%, #ff5a4d 90%);
+                clip-path: inset(0 calc(100% - var(--v, 0%)) 0 0); }
+    .lv-bar b { position: absolute; top: 0; bottom: 0; left: var(--v, 0%); width: 2px; margin-left: -1px; background: #f2f2f2; opacity: 0; }
+    .lv-bar b.show { opacity: .9; }
+    .lv-row.loud .lv-bar { height: 8px; overflow: visible; }
+    .lv-row.loud .lv-bar i { background: #9aa0a6; border-radius: 4px; }
+    .lv-bar b.target { top: -4px; bottom: -4px; background: #45F862; opacity: 1; border-radius: 1px; }
+    .lv-num { font-size: 11px; color: #8e9297; text-align: right; white-space: nowrap; }
+    .lv-num strong { font-size: 13px; font-weight: 650; color: #f2f2f2; }
+    .lv-scale { position: relative; height: 14px; font-size: 9.5px; color: #6f747a; }
+    .lv-scale span { position: absolute; top: 0; transform: translateX(-50%); }
+    .lv-scale span:last-child { transform: translateX(-100%); }
+
+    /* the suggestion */
+    .advice { display: grid; align-content: start; gap: 4px; }
+    .advice.ok { border-color: #1f5a2c; background: linear-gradient(180deg, rgba(18, 38, 26, .95), rgba(14, 16, 18, .92)); }
+    .advice .big strong { font-size: 72px; }
+    .advice.wait .big strong { color: #6f747a; }
+    .advice.ok .big strong { color: var(--green); }
+    .advice-text { min-height: 42px; font-size: 14.5px; line-height: 1.45; color: #e2e4e6; }
+    .advice-text b { color: #fff; }
+    .progress { height: 4px; margin: 12px 0 8px; border-radius: 2px; background: #1d2024; overflow: hidden; }
+    .progress i { display: block; height: 100%; width: var(--v, 0%); background: #45F862; transition: width .1s linear; }
+    .measure-text { min-height: 38px; font-size: 12.5px; line-height: 1.5; color: #9aa0a6; }
+    .measure-text.warn { color: #ffb02e; }
+    .advice-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-top: 10px; }
+    .advice-actions button.primary { display: inline-flex; align-items: center; gap: 8px; }
+    .check { display: inline-flex; align-items: center; gap: 8px; color: #9aa0a6; font-size: 12.5px; cursor: pointer; }
+    .check input { accent-color: #45F862; }
+
+    /* sound types and their targets */
+    .kinds { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+    .kind { display: grid; gap: 6px; padding: 10px 10px 9px; border: 1px solid #2c3035; border-radius: 11px; background: #17191c; cursor: pointer; text-align: left; }
+    .kind:hover { border-color: #4a4f55; }
+    .kind.sel { border-color: #45F862; background: #12261a; }
+    .kind .nm { display: flex; justify-content: space-between; font-size: 13.5px; font-weight: 650; color: #f2f2f2; }
+    .kind .nm kbd { font: inherit; font-size: 10.5px; font-weight: 500; color: #6f747a; }
+    .kind .tg { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; font-size: 10px; letter-spacing: .06em; color: #8e9297; }
+    .kind .tg span { white-space: nowrap; }
+    .kind input { width: 74px; flex: none; min-width: 0; padding: 4px 6px; border: 1px solid #33383e; border-radius: 7px; background: #0c0d0f; color: #f2f2f2; font-size: 12.5px; outline: none; }
+    .kind input:focus { border-color: #8a8a8a; }
+    .kind .off { font-size: 11px; color: #6f747a; min-height: 15px; }
+    .profile-text { margin-top: 12px; }
+
+    /* history */
+    .rows { display: grid; gap: 2px; }
+    .row { display: grid; grid-template-columns: 70px minmax(120px, 1fr) 132px 92px 112px 28px; gap: 10px; align-items: center; padding: 6px 8px; border-radius: 8px; font-size: 13px; }
+    .row:hover { background: #1a1d20; }
+    .row .t { color: #6f747a; font-size: 12px; white-space: nowrap; }
+    .row input { width: 100%; min-width: 0; padding: 5px 8px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #f2f2f2; font-size: 13px; outline: none; }
+    .row input:hover { border-color: #33383e; }
+    .row input:focus { border-color: #8a8a8a; background: #0c0d0f; }
+    .row .k { color: #c8ccd1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .row .l { color: #9aa0a6; text-align: right; }
+    .row .s { font-weight: 650; text-align: right; white-space: nowrap; }
+    .row .s.ok { color: var(--green); }
+    .row .x { width: 28px; height: 28px; padding: 0; border-radius: 50%; display: grid; place-items: center; border-color: transparent; background: transparent; color: #6f747a; }
+    .row .x:hover { color: #fff; border-color: #3a3f45; }
+    .row .x .ico { width: 13px; height: 13px; }
+    .rows-empty { padding: 14px 8px 6px; color: var(--muted); font-size: 13px; }
+
+    .toasts { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 80; display: grid; gap: 8px; justify-items: center; pointer-events: none; }
+    .toast { display: flex; align-items: center; gap: 10px; max-width: min(560px, calc(100vw - 32px)); padding: 11px 18px 11px 13px; border-radius: 14px;
+             background: rgba(28, 31, 34, .94); border: 1px solid #33383e; color: #f2f2f2; font-size: 13.5px; line-height: 1.4;
+             box-shadow: 0 16px 40px rgba(0, 0, 0, .55); backdrop-filter: blur(16px); animation: toast-in .18s ease-out; }
+    .toast.out { opacity: 0; transform: translateY(6px); transition: opacity .25s, transform .25s; }
+    @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
+    .toast .badge { flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 800; color: #0d0f11; background: var(--green); }
+
+    @media (max-width: 900px) {
+      .topbar { flex-wrap: wrap; }
+      .brand { flex-basis: 100%; }
+      .source { flex: 1 1 auto; }
+      .tool-sep { display: none; }
+      #input { flex: 1 1 auto; width: auto; }
+      .hero { grid-template-columns: minmax(0, 1fr); }
+      .kinds { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .row { grid-template-columns: 64px minmax(90px, 1fr) 120px 92px 28px; }
+      .row .l { display: none; }
+    }
+    @media (max-width: 560px) {
+      .page { padding: 16px; }
+      .topbar { padding-left: 16px; padding-right: 16px; }
+      .kinds { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .big strong, .advice .big strong { font-size: 52px; }
+      .row { grid-template-columns: minmax(80px, 1fr) 84px 28px; }
+      .row .t, .row .k { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4.5 16.5a7.5 7.5 0 0 1 15 0" fill="none" stroke="#45F862" stroke-width="2.2" stroke-linecap="round" stroke-dasharray="2.2 1.6"/><path d="M12 16.5l3.4-5.2" stroke="#eee" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="16.5" r="1.7" fill="#45F862"/></svg></span>
+      <h1>LUFS Meter</h1>
+      <span class="brand-sub">For the Nano Cortex · <span id="version"></span></span>
+    </div>
+    <div class="source">
+      <select id="input" aria-label="Audio input"></select>
+      <select id="pair" aria-label="Channels" title="The channels to measure – on the Nano 1/2 are the dry guitar signal, 3/4 its sound" hidden></select>
+      <div id="meterToggle" class="toggle-switch" title="Meter on / off" role="switch" aria-label="Meter"><div class="toggle-dot"></div></div>
+    </div>
+    <span class="tool-sep"></span>
+    <div id="profileBox" class="seg-box" role="group" aria-label="Where you play">
+      <button class="seg" data-profile="quiet" title="Quiet: at home, about 60–75 dB at your ears (P switches)">Quiet</button>
+      <button class="seg" data-profile="rehearsal" title="Rehearsal: loud with the band, about 95–105 dB at your ears (P switches)">Rehearsal</button>
+    </div>
+  </header>
+
+  <main class="page">
+    <div id="notice" class="notice"><div id="noticeText" class="hint"></div><button id="noticeStart" class="primary">Switch on</button></div>
+
+    <section class="hero">
+      <div class="card readout">
+        <div class="eyebrow" title="The loudness of the last three seconds">Short-term · 3 s</div>
+        <div class="big"><strong id="stNum">–</strong><em>LUFS</em></div>
+        <div class="chips">
+          <span class="chip" title="The loudness of the last 400 ms">Momentary <b id="momNum">–</b></span>
+          <span class="chip" title="The loudness of this measurement: everything played since it started, gated as in ITU-R BS.1770">Integrated <b id="intNum">–</b></span>
+          <span class="chip" title="The highest peak of this measurement (sample peak)">Peak <b id="peakNum">–</b> dBFS</span>
+          <span id="clip" class="chip clip" hidden>Clip</span>
+        </div>
+        <div class="lv-meter">
+          <div class="lv-row"><span class="lv-ch">L</span><div class="lv-bar"><i id="barL"></i><b id="holdL"></b></div><span class="lv-num"><strong id="numL">–</strong> dB</span></div>
+          <div class="lv-row"><span class="lv-ch">R</span><div class="lv-bar"><i id="barR"></i><b id="holdR"></b></div><span class="lv-num"><strong id="numR">–</strong> dB</span></div>
+          <div class="lv-row loud" title="Short-term loudness; the green mark is the target of the chosen sound"><span class="lv-ch">Loud</span><div class="lv-bar"><i id="barLoud"></i><b id="targetMark" class="target"></b></div><span class="lv-num"><strong id="loudNum">–</strong> LUFS</span></div>
+          <div class="lv-row"><span></span><div id="scale" class="lv-scale"></div><span></span></div>
+        </div>
+      </div>
+
+      <div id="advice" class="card advice wait">
+        <div id="adviceHead" class="eyebrow">Suggestion</div>
+        <div class="big"><strong id="adviceNum">–</strong><em id="adviceUnit">dB</em></div>
+        <div id="adviceText" class="advice-text"></div>
+        <div class="progress"><i id="progress"></i></div>
+        <div id="measureText" class="measure-text"></div>
+        <div class="advice-actions">
+          <button id="restart" class="primary" title="Starts a new measurement; a finished one goes into the history (Space)"><span class="ico" style="--icon: var(--ico-restart)"></span>New measurement</button>
+          <button id="takeTarget" class="link" hidden></button>
+          <label class="check" title="After three seconds without playing, the next note starts a new measurement – for going through the presets one after another"><input id="autoNew" type="checkbox"> New after a pause</label>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h3>Sound and dynamics</h3><button id="resetTargets" class="link" title="Back to Clean at −20 LUFS and the suggested steps">Reset</button></div>
+      <div id="kinds" class="kinds"></div>
+      <div id="profileText" class="hint profile-text"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h3>History</h3><button id="clearHistory" class="link">Clear</button></div>
+      <div id="rows" class="rows"></div>
+    </section>
+  </main>
+  <div id="toasts" class="toasts"></div>
+
+  <script>
+    'use strict';
+    const APP_VERSION = '1.1.0';
+    const $ = id => document.getElementById(id);
+    const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+    const log = message => console.log('LUFS Meter: ' + message);
+    function toast(text, ms = 3200) {
+      const el = document.createElement('div');
+      el.className = 'toast';
+      el.innerHTML = '<span class="badge">✓</span><span></span>';
+      el.lastChild.textContent = text;
+      $('toasts').appendChild(el);
+      setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 300); }, ms);
+    }
+    $('version').textContent = APP_VERSION;
+
+    // The Mac app's bridges (mac-app/preload.js): the nano-meter helper reads any channel pair with Core Audio.
+    // In Chrome they are missing and the page opens the audio input itself (on a Mac only channels 1/2 arrive).
+    const nativeMeter = () => window.nanoMeter || null;   // looked up at call time
+    if (window.lufsApp) {
+      document.documentElement.classList.add('app');
+      window.lufsApp.onFullscreen(on => document.documentElement.classList.toggle('fullscreen', on));
+    }
+
+    // ---- Sound types and their targets ----
+    // Targets in LUFS of the Nano's USB sound (channels 3/4) with LEVEL on the Nano at 10, built from three parts:
+    // - the level of Clean (the quietest sound; "Take as target" moves it, and all others with it),
+    // - the steps of the dynamics: how much louder each sound should SOUND than Clean (Lead: than Drive) - the same
+    //   in every song and in both profiles,
+    // - the correction of the profile: at equal LUFS the mid-heavy sounds seem louder than Clean, at low volume more
+    //   than at high volume (ISO 226; Lautheit-Untersuchung.md). Quiet: at home, about 60-75 dB at your ears.
+    //   Rehearsal: with the band, about 95-105 dB.
+    const KINDS = [
+      { key: 'clean', label: 'Clean' },
+      { key: 'edge', label: 'Edge' },
+      { key: 'drive', label: 'Drive' },
+      { key: 'fuzz', label: 'Fuzz' },
+      { key: 'lead', label: 'Lead' }
+    ];
+    const DEFAULT_BASE = -20;                                      // Clean, LUFS
+    const DEFAULT_STEPS = { edge: 1.5, drive: 3, fuzz: 3, lead: 3 };   // dB over Clean; Lead over Drive
+    const CORRECTION = {   // dB each sound needs against Clean to sound as loud at equal LUFS (model, see the study)
+      quiet: { clean: 0, edge: -0.5, drive: -2, fuzz: -1, lead: -2 },
+      rehearsal: { clean: 0, edge: -0.5, drive: -0.5, fuzz: -0.5, lead: -0.5 }
+    };
+    const PROFILES = {
+      quiet: { label: 'Quiet', text: 'Quiet – at home, about 60–75 dB at your ears. At low volume the ear hears little bass, so the mid-heavy sounds seem louder than their LUFS: Drive and Lead get 2 dB less, Fuzz 1 dB, Edge 0.5 dB less than their steps say.' },
+      rehearsal: { label: 'Rehearsal', text: 'Rehearsal – with the band, about 95–105 dB at your ears. The ear is flatter at high volume: Edge, Drive, Fuzz and Lead get only 0.5 dB less than their steps say.' }
+    };
+    const TOLERANCE = 0.5;          // LU around the target that count as on target
+    const PLAY_LUFS = -50;          // louder than this counts as playing
+    const MIN_SECONDS = 4;          // of played signal before the suggestion counts
+    const PAUSE_SECONDS = 3;        // without playing: the next note starts a new measurement (if chosen)
+    const CEILING_DB = -1;          // the peaks should stay below it
+    const METER_FLOOR_DB = -60;
+    const NANO_AUDIO = /nano\s*cortex|neural\s*dsp/i;
+
+    const STORE = 'lufsMeter';   // { input, pairs: { label: first channel }, kind, profile, base, steps, autoNew, history }
+    const store = { input: '', pairs: {}, kind: 'drive', profile: 'rehearsal', base: DEFAULT_BASE, steps: { ...DEFAULT_STEPS }, autoNew: true, history: [] };
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORE) || '{}');
+      if (typeof saved.input === 'string') store.input = saved.input;
+      if (saved.pairs && typeof saved.pairs === 'object') store.pairs = saved.pairs;
+      if (KINDS.some(k => k.key === saved.kind)) store.kind = saved.kind;
+      if (PROFILES[saved.profile]) store.profile = saved.profile;
+      if (typeof saved.autoNew === 'boolean') store.autoNew = saved.autoNew;
+      if (Array.isArray(saved.history)) store.history = saved.history.filter(h => h && Number.isFinite(h.lufs)).slice(0, 100);
+      if (Number.isFinite(saved.base)) store.base = saved.base;
+      Object.keys(DEFAULT_STEPS).forEach(key => { if (saved.steps && Number.isFinite(saved.steps[key])) store.steps[key] = saved.steps[key]; });
+    } catch (e) { /* storage unavailable */ }
+    function save() {
+      try { localStorage.setItem(STORE, JSON.stringify(store)); } catch (e) { /* storage unavailable */ }
+    }
+    // how much louder a sound should sound than Clean
+    const intent = kind => (kind === 'clean' ? 0 : kind === 'lead' ? store.steps.drive + store.steps.lead : store.steps[kind]);
+    const target = (kind = store.kind, profile = store.profile) => Math.round((store.base + intent(kind) + CORRECTION[profile][kind]) * 10) / 10;
+    const kindLabel = key => KINDS.find(k => k.key === key).label;
+
+    // ---- Loudness (ITU-R BS.1770, as in the Nano Cortex Editor) ----
+    const toDb = amplitude => (amplitude > 0 ? 20 * Math.log10(amplitude) : -Infinity);
+    const lufsOf = energy => (energy > 0 ? -0.691 + 10 * Math.log10(energy) : -Infinity);
+    const WEB_K_GAIN = Math.pow(10, 0.041 / 10);   // the high pass of BS.1770 has 0.04 dB of gain, the browser's has none
+    const dbText = (db, signed = false) => {
+      if (!Number.isFinite(db)) return '–';
+      const value = Math.abs(db) < 0.05 ? 0 : db;
+      return (signed && value > 0 ? '+' : '') + value.toFixed(1).replace('-', '−');
+    };
+    const meterPos = db => (clamp((db - METER_FLOOR_DB) / -METER_FLOOR_DB, 0, 1) * 100).toFixed(1) + '%';
+
+    // Mean energy of blocks of different lengths
+    function blockEnergy(blocks) {
+      const seconds = blocks.reduce((sum, b) => sum + b.s, 0);
+      return seconds > 0 ? blocks.reduce((sum, b) => sum + b.e * b.s, 0) / seconds : 0;
+    }
+    // Gated as in BS.1770: 400 ms windows in 100 ms steps, without those below -70 LUFS and without those more than
+    // 10 LU below the rest (pauses and ringing notes do not pull it down).
+    function gatedLoudness(blocks) {
+      const windows = blocks.map((b, i) => blockEnergy(blocks.slice(Math.max(0, i - 3), i + 1)));
+      const mean = list => list.reduce((a, b) => a + b, 0) / list.length;
+      let kept = windows.filter(e => lufsOf(e) > -70);
+      if (!kept.length) return -Infinity;
+      const gate = lufsOf(mean(kept)) - 10;
+      kept = kept.filter(e => lufsOf(e) > gate);
+      return lufsOf(mean(kept));
+    }
+
+    // ---- The meter: the audio input, peaks and 100 ms blocks of K-weighted energy ----
+    // channels: 1 or 2 measured ones, starting at channel "first" (1-based) of the "total" the input delivers
+    const meter = { on: false, starting: false, userOff: false, native: false, rate: 48000, ctx: null, stream: null, raw: [], weighted: [], buf: null,
+      timer: null, lastTime: 0, channels: 2, total: 2, first: 1, label: '', deviceId: '', inputs: [], error: '',
+      peakDb: [-Infinity, -Infinity], holdDb: [-Infinity, -Infinity], holdAt: [0, 0], clipAt: 0, energy: 0, frames: 0, blockPeak: 0, blocks: [] };
+    // The measurement: the blocks played since it started (capped at ten minutes), the highest peak, the pause.
+    const measure = { blocks: [], played: 0, peak: 0, quiet: 0, loud: -Infinity, startedAt: Date.now() };
+
+    async function meterInputs() {
+      const all = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput' && d.label);
+      const real = all.filter(d => d.deviceId !== 'default' && d.deviceId !== 'communications');
+      return real.length ? real : all;
+    }
+    // The first channel of the pair: the one chosen for this input before, else 3/4 on the Nano, else 1/2.
+    function meterPair(label, total) {
+      const stored = Number(store.pairs[label]);
+      if (stored >= 1 && stored <= total && stored % 2 === 1) return stored;
+      return NANO_AUDIO.test(label) && total >= 4 ? 3 : 1;
+    }
+    const pairText = (first, total) => (first < total ? first + '/' + (first + 1) : String(first));
+    // The Nano's channels 1/2 are its dry input: no capture, no effects.
+    const meterIsDry = () => meter.on && NANO_AUDIO.test(meter.label) && meter.first < 3;
+    const METER_DENIED = 'The audio input was not allowed. Allow the microphone for LUFS Meter – in the Mac app under System Settings > Privacy & Security > Microphone, ' +
+      'in the browser at the lock symbol in the address bar.';
+
+    // Opens the audio input (deviceId: a chosen one; without it the input used last time, else the Nano by its name).
+    async function meterStart(deviceId) {
+      const m = meter;
+      if (m.starting) return false;
+      if (!nativeMeter() && !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+        m.error = 'This browser gives the page no audio input.';
+        render();
+        return false;
+      }
+      m.starting = true;
+      m.error = '';
+      render();
+      try {
+        m.error = (await (nativeMeter() ? meterStartNative(deviceId) : meterStartWeb(deviceId))) || '';
+      } catch (err) {
+        const name = err && err.name;
+        m.error = name === 'NotAllowedError' || name === 'SecurityError' ? METER_DENIED
+          : name === 'NotFoundError' || name === 'OverconstrainedError' ? 'This audio input is not there (any more).'
+          : 'The audio input did not open: ' + ((err && err.message) || err);
+      } finally {
+        m.starting = false;
+      }
+      if (m.error) log('meter: ' + m.error);
+      else log('meter on: ' + m.label + ', channel' + (m.channels > 1 ? 's ' : ' ') + pairText(m.first, m.total) + ' of ' + m.total + ', ' + m.rate + ' Hz' + (m.native ? ' (helper)' : ''));
+      measureRestart(false);
+      render();
+      return !m.error;
+    }
+
+    // Mac app: the helper lists the inputs with all their channels and measures the pair. Returns an error text or ''.
+    async function meterStartNative(deviceId) {
+      const m = meter;
+      const listed = await nativeMeter().list();
+      if (listed.error) return listed.error;
+      m.inputs = listed.devices.map(d => ({ deviceId: d.uid, label: d.name, channels: d.channels, standard: d.default }));
+      const device = deviceId ? m.inputs.find(d => d.deviceId === deviceId)
+        : m.inputs.find(d => d.label === store.input) || m.inputs.find(d => NANO_AUDIO.test(d.label)) || m.inputs.find(d => d.standard) || m.inputs[0];
+      if (!device) return deviceId ? 'This audio input is not there (any more).' : 'This Mac has no audio input.';
+      meterStop();
+      const reply = await nativeMeter().start({ uid: device.deviceId, first: meterPair(device.label, device.channels) });
+      if (reply.error) return reply.error === 'denied' ? METER_DENIED : reply.error;
+      Object.assign(m, { on: true, native: true, userOff: false, rate: reply.rate, total: reply.channels, first: reply.first, channels: reply.count,
+        label: reply.name || device.label, deviceId: device.deviceId });
+      nativeMeter().onData(data => {
+        if (!m.on || !m.native) return;
+        if (data.error) {
+          meterStop();
+          m.error = data.error;
+          render();
+        } else if (Array.isArray(data.p)) {
+          meterFeed(data.p, Number(data.e) || 0, Number(data.n) || 0, m.rate);
+        }
+      });
+      return '';
+    }
+
+    // Browser: the samples come through Web Audio. Returns an error text or '' (getUserMedia may also throw).
+    async function meterStartWeb(deviceId) {
+      const m = meter;
+      let stream = null;
+      try {
+        const open = id => navigator.mediaDevices.getUserMedia({ audio: Object.assign(
+          { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: { ideal: 8 } }, id ? { deviceId: { exact: id } } : {}) });
+        stream = await open(deviceId);
+        m.inputs = await meterInputs();   // the names are readable once an input was allowed
+        if (!deviceId) {
+          const wanted = m.inputs.find(d => d.label === store.input) || m.inputs.find(d => NANO_AUDIO.test(d.label));
+          if (wanted && wanted.deviceId !== stream.getAudioTracks()[0].getSettings().deviceId) {
+            stream.getTracks().forEach(track => track.stop());
+            stream = await open(wanted.deviceId);
+          }
+        }
+        meterStop();
+        const track = stream.getAudioTracks()[0];
+        const settings = track.getSettings();
+        const label = track.label || 'Audio input';
+        const total = Math.max(1, Math.min(32, Number(settings.channelCount) || 2));
+        const first = meterPair(label, total);
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const source = ctx.createMediaStreamSource(stream);
+        const splitter = ctx.createChannelSplitter(Math.max(2, total));
+        const sink = ctx.createGain();   // silent: only keeps the measuring nodes running in every browser
+        sink.gain.value = 0;
+        sink.connect(ctx.destination);
+        source.connect(splitter);
+        m.channels = first < total ? 2 : 1;
+        for (let ch = 0; ch < m.channels; ch++) {
+          const raw = ctx.createAnalyser();
+          raw.fftSize = 8192;
+          splitter.connect(raw, first - 1 + ch);
+          raw.connect(sink);
+          // K-weighting with the browser's own filters, fitted to the BS.1770 curve (within 0.05 dB from 30 Hz to 12 kHz
+          // at any sample rate): high shelf +4 dB, then a high pass at 38 Hz with Q 0.5 (Web Audio takes that Q in dB).
+          const shelf = ctx.createBiquadFilter();
+          shelf.type = 'highshelf';
+          shelf.frequency.value = 1500;
+          shelf.gain.value = 4;
+          const highPass = ctx.createBiquadFilter();
+          highPass.type = 'highpass';
+          highPass.frequency.value = 38.4;
+          highPass.Q.value = -5.9;
+          const weighted = ctx.createAnalyser();
+          weighted.fftSize = 8192;
+          splitter.connect(shelf, first - 1 + ch);
+          shelf.connect(highPass);
+          highPass.connect(weighted);
+          weighted.connect(sink);
+          m.raw.push(raw);
+          m.weighted.push(weighted);
+        }
+        if (ctx.state === 'suspended') await ctx.resume();
+        Object.assign(m, { on: true, native: false, userOff: false, ctx, stream, buf: new Float32Array(8192), lastTime: ctx.currentTime, rate: ctx.sampleRate,
+          total, first, label, deviceId: settings.deviceId || deviceId || '' });
+        track.addEventListener('ended', () => {
+          if (m.stream !== stream) return;
+          meterStop();
+          m.error = 'The audio input is gone (USB cable?).';
+          render();
+        });
+        m.timer = setInterval(meterTick, 25);
+        return '';
+      } catch (err) {
+        if (stream) stream.getTracks().forEach(track => track.stop());
+        throw err;
+      }
+    }
+
+    function meterStop() {
+      const m = meter;
+      clearInterval(m.timer);
+      if (m.native && nativeMeter()) nativeMeter().stop();
+      if (m.stream) m.stream.getTracks().forEach(track => track.stop());
+      if (m.ctx) m.ctx.close().catch(() => {});
+      Object.assign(m, { on: false, native: false, ctx: null, stream: null, raw: [], weighted: [], timer: null, peakDb: [-Infinity, -Infinity],
+        holdDb: [-Infinity, -Infinity], clipAt: 0, energy: 0, frames: 0, blockPeak: 0, blocks: [] });
+    }
+
+    // Browser, every 25 ms: the samples that came since the last time (the analysers hold the newest 8192).
+    function meterTick() {
+      const m = meter;
+      if (!m.on || m.native) return;
+      const size = m.buf.length;
+      const time = m.ctx.currentTime;
+      const frames = Math.min(size, Math.round((time - m.lastTime) * m.ctx.sampleRate));
+      if (frames <= 0) return;
+      m.lastTime = time;
+      const peaks = [];
+      let sum = 0;
+      for (let ch = 0; ch < m.channels; ch++) {
+        m.raw[ch].getFloatTimeDomainData(m.buf);
+        let peak = 0;
+        for (let i = size - frames; i < size; i++) { const a = Math.abs(m.buf[i]); if (a > peak) peak = a; }
+        peaks.push(peak);
+        m.weighted[ch].getFloatTimeDomainData(m.buf);
+        for (let i = size - frames; i < size; i++) sum += m.buf[i] * m.buf[i];
+      }
+      meterFeed(peaks, sum * WEB_K_GAIN, frames, m.ctx.sampleRate);
+    }
+
+    // New samples from either source: the peak of each measured channel, the K-weighted squares of all of them
+    // together and how many frames that were.
+    function meterFeed(peaks, energy, frames, rate) {
+      const m = meter;
+      if (!m.on || frames <= 0) return;
+      const now = performance.now();
+      const fall = 26 * frames / rate;   // the bars fall with 26 dB per second
+      for (let ch = 0; ch < m.channels; ch++) {
+        const peak = Number(peaks[ch]) || 0;
+        const db = toDb(peak);
+        m.peakDb[ch] = Math.max(db, m.peakDb[ch] - fall);
+        if (db >= m.holdDb[ch]) { m.holdDb[ch] = db; m.holdAt[ch] = now; }
+        else if (now - m.holdAt[ch] > 1500) m.holdDb[ch] = Math.max(db, m.holdDb[ch] - fall);
+        if (peak >= 0.999) m.clipAt = now;
+        if (peak > m.blockPeak) m.blockPeak = peak;
+      }
+      m.energy += energy;
+      m.frames += frames;
+      if (m.frames >= rate / 10) {   // a block of about 100 ms: the energy of all channels together
+        const block = { e: m.energy / m.frames, s: m.frames / rate, peak: m.blockPeak };
+        m.energy = 0;
+        m.frames = 0;
+        m.blockPeak = 0;
+        m.blocks.push(block);
+        if (m.blocks.length > 30) m.blocks.shift();
+        measureBlock(block);
+      }
+      draw();
+    }
+
+    // ---- The measurement and the suggestion ----
+    const MAX_BLOCKS = 6000;   // ten minutes of playing
+    function measureBlock(block) {
+      const ms = measure;
+      if (lufsOf(block.e) > PLAY_LUFS) {
+        // a note after a pause: the next preset (if chosen) - the finished measurement goes into the history
+        if (store.autoNew && ms.quiet >= PAUSE_SECONDS && ms.played > 0) measureRestart(true);
+        ms.quiet = 0;
+        ms.blocks.push(block);
+        if (ms.blocks.length > MAX_BLOCKS) ms.blocks.shift();
+        ms.played += block.s;
+        if (block.peak > ms.peak) ms.peak = block.peak;
+        ms.loud = gatedLoudness(ms.blocks);
+        renderAdvice();
+      } else if (ms.played > 0) {
+        const before = ms.quiet;
+        ms.quiet += block.s;
+        if (before < PAUSE_SECONDS && ms.quiet >= PAUSE_SECONDS) renderAdvice();
+      }
+    }
+
+    // keep: a finished measurement (enough playing) goes into the history first
+    function measureRestart(keep) {
+      const ms = measure;
+      if (keep && ms.played >= MIN_SECONDS && Number.isFinite(ms.loud)) {
+        store.history.unshift({ at: Date.now(), kind: store.kind, profile: store.profile, lufs: Math.round(ms.loud * 10) / 10, target: target(),
+          peak: Math.round(toDb(ms.peak) * 10) / 10, name: '' });
+        store.history.length = Math.min(store.history.length, 100);
+        save();
+        renderHistory();
+      }
+      Object.assign(ms, { blocks: [], played: 0, peak: 0, quiet: 0, loud: -Infinity, startedAt: Date.now() });
+      renderAdvice();
+    }
+
+    // The change for the preset: target minus what was measured, and where the peaks would land
+    function suggestion(loud, peakDb, goal) {
+      const change = Math.round((goal - loud) * 10) / 10;   // as it is shown, so that "−0.5" counts as on target
+      const room = CEILING_DB - peakDb;   // dB the peaks can still go up
+      return { change, ok: Math.abs(change) <= TOLERANCE, clips: change > 0 && change > room, room };
+    }
+
+    function renderAdvice() {
+      const ms = measure;
+      const goal = target();
+      const box = $('advice');
+      $('adviceHead').textContent = 'Suggestion · ' + kindLabel(store.kind) + ' · ' + PROFILES[store.profile].label;
+      const ready = ms.played >= MIN_SECONDS && Number.isFinite(ms.loud);
+      const started = ms.played > 0 && Number.isFinite(ms.loud);
+      $('progress').style.setProperty('--v', clamp(ms.played / MIN_SECONDS, 0, 1) * 100 + '%');
+      $('takeTarget').hidden = !ready;
+      let num = '–', text = '', measured = '', warn = false, ok = false;
+      if (!meter.on) {
+        text = 'Switch the meter on and play.';
+      } else if (meterIsDry()) {
+        text = 'Channels 1/2 of the Nano are the dry guitar signal – choose 3 / 4 to measure the preset.';
+      } else if (!started) {
+        text = 'Play the way you would in the song – chords for a rhythm sound, a line for a lead sound.';
+        measured = 'The measurement starts with the first note. Measure with LEVEL on the Nano at 10.';
+      } else {
+        const s = suggestion(ms.loud, toDb(ms.peak), goal);
+        const amount = dbText(Math.abs(s.change));
+        num = s.ok ? '✓' : dbText(s.change, true);
+        ok = ready && s.ok;
+        if (s.ok) text = 'On target – this preset can stay as it is.';
+        else if (s.change < 0) text = 'Turn the preset <b>down by ' + amount + ' dB</b>: the capture volume in the Capture block (or the level of the last effect), with LEVEL on the Nano at 10.';
+        else text = 'Turn the preset <b>up by ' + amount + ' dB</b>: the capture volume in the Capture block (or the level of the last effect), with LEVEL on the Nano at 10.';
+        if (!ready) text = (s.ok ? 'Close to the target' : 'So far ' + num + ' dB') + ' – keep playing …';
+        measured = (ready ? 'Measured ' : 'Measuring – ') + ms.played.toFixed(1) + ' s of playing' + (ready ? '' : ' of ' + MIN_SECONDS) + ' · integrated ' + dbText(ms.loud) +
+          ' LUFS · target ' + dbText(goal) + ' LUFS · peaks up to ' + dbText(toDb(ms.peak)) + ' dBFS';
+        if (s.clips) {
+          warn = true;
+          measured += '. Louder by more than ' + dbText(Math.max(0, s.room)) + ' dB the peaks pass ' + dbText(CEILING_DB) + ' dBFS on USB – use less gain or more compression, or leave this sound a little quieter.';
+        }
+        if (store.autoNew && ms.quiet >= PAUSE_SECONDS) measured += ' · Paused: the next note starts a new measurement.';
+        if (!ready) num = '…';
+      }
+      box.classList.toggle('wait', !ready);
+      box.classList.toggle('ok', ok);
+      $('adviceNum').textContent = num;
+      $('adviceUnit').hidden = !ready || ok;
+      $('adviceText').innerHTML = text;
+      $('measureText').textContent = measured;
+      $('measureText').classList.toggle('warn', warn);
+      if (ready) $('takeTarget').textContent = 'Take ' + dbText(ms.loud) + ' LUFS as the ' + kindLabel(store.kind) + ' target (the others move along)';
+      $('restart').disabled = !meter.on;
+      renderKinds();
+    }
+
+    // The measured loudness becomes the target of its kind: the level of Clean moves, the steps stay.
+    function takeTarget() {
+      if (!Number.isFinite(measure.loud)) return;
+      store.base = Math.round(clamp(store.base + measure.loud - target(), -40, -8) * 10) / 10;
+      save();
+      toast(PROFILES[store.profile].label + ' targets: ' + KINDS.map(k => k.label + ' ' + dbText(target(k.key))).join(', '));
+      renderAll();
+    }
+
+    // ---- Drawing ----
+    function draw() {
+      const m = meter;
+      const st = m.on && m.blocks.length ? lufsOf(blockEnergy(m.blocks)) : -Infinity;          // the last three seconds
+      const mom = m.on && m.blocks.length ? lufsOf(blockEnergy(m.blocks.slice(-4))) : -Infinity;   // the last 400 ms
+      ['L', 'R'].forEach((side, i) => {
+        const ch = Math.min(i, m.channels - 1);
+        $('bar' + side).style.setProperty('--v', meterPos(m.peakDb[ch]));
+        $('hold' + side).style.setProperty('--v', meterPos(m.holdDb[ch]));
+        $('hold' + side).classList.toggle('show', m.holdDb[ch] > METER_FLOOR_DB);
+        $('num' + side).textContent = m.holdDb[ch] > -90 ? dbText(m.holdDb[ch]) : '–';
+      });
+      $('barLoud').style.setProperty('--v', meterPos(st));
+      $('loudNum').textContent = st > -70 ? dbText(st) : '–';
+      $('stNum').textContent = st > -70 ? dbText(st) : '–';
+      $('momNum').textContent = mom > -70 ? dbText(mom) : '–';
+      $('intNum').textContent = Number.isFinite(measure.loud) ? dbText(measure.loud) : '–';
+      $('peakNum').textContent = measure.peak > 0 ? dbText(toDb(measure.peak)) : '–';
+      $('clip').hidden = !(m.clipAt && performance.now() - m.clipAt < 2000);
+    }
+
+    function renderSource() {
+      const m = meter;
+      $('meterToggle').classList.toggle('on', m.on);
+      $('meterToggle').setAttribute('aria-checked', String(m.on));
+      const select = $('input');
+      select.innerHTML = '';
+      if (!m.inputs.length) select.appendChild(new Option(m.starting ? 'Opening the audio input …' : 'Audio input', ''));
+      m.inputs.forEach(d => select.appendChild(new Option(d.label, d.deviceId, false, m.on && d.deviceId === m.deviceId)));
+      if (m.on && !m.inputs.some(d => d.deviceId === m.deviceId)) select.appendChild(new Option(m.label, m.deviceId, false, true));
+      if (!m.on && m.inputs.length) select.insertBefore(new Option('Choose the audio input …', '', false, true), select.firstChild);
+      select.disabled = m.starting || !m.inputs.length;
+      const pair = $('pair');
+      const nano = NANO_AUDIO.test(m.label);
+      pair.innerHTML = '';
+      for (let first = 1; m.on && first <= m.total; first += 2) {
+        const what = !nano ? '' : first === 1 ? ' · DI' : first === 3 ? ' · sound' : '';
+        pair.appendChild(new Option(pairText(first, m.total).replace('/', ' / ') + what, String(first), false, first === m.first));
+      }
+      pair.hidden = !(m.on && m.total > 2);
+      pair.disabled = m.starting;
+      // the notice above the meter
+      const text = m.error ? m.error
+        : m.starting ? 'Opening the audio input …'
+        : !m.on ? 'Connect the Nano to this computer with a USB-C cable and switch the meter on. It reads the Nano\'s USB sound (channels 3/4) – ' +
+            (nativeMeter() ? 'macOS' : 'the browser') + ' asks once for the audio input ("microphone"). Nothing is recorded.'
+        : !nano ? 'This input does not look like the Nano – choose the Nano\'s USB audio above if the bars show something else.'
+        : meterIsDry() && m.total < 4 ? 'The browser passes on only the first two USB channels – on the Nano that is the dry guitar signal (DI). The Mac app reads its sound on 3/4.'
+        : meterIsDry() ? 'Channels 1/2 of the Nano carry the dry guitar signal (DI). Its sound with capture and effects is on 3 / 4.'
+        : '';
+      $('notice').hidden = !text;
+      $('notice').classList.toggle('error', Boolean(m.error) || meterIsDry());
+      $('noticeText').textContent = text;
+      $('noticeStart').hidden = m.on || m.starting;
+      $('noticeStart').textContent = m.error ? 'Try again' : 'Switch on';
+    }
+
+    function renderKinds() {
+      document.querySelectorAll('#kinds .kind').forEach(el => {
+        const key = el.dataset.kind;
+        el.classList.toggle('sel', key === store.kind);
+        const input = el.querySelector('input');
+        if (document.activeElement !== input) input.value = key === 'clean' ? store.base.toFixed(1) : (store.steps[key] > 0 ? '+' : '') + store.steps[key].toFixed(1);
+        el.querySelector('.off').textContent = key === 'clean' ? 'the quietest sound' : 'target ' + dbText(target(key)) + ' LUFS';
+      });
+      $('targetMark').style.setProperty('--v', meterPos(target()));
+      $('resetTargets').hidden = store.base === DEFAULT_BASE && Object.keys(DEFAULT_STEPS).every(key => store.steps[key] === DEFAULT_STEPS[key]);
+      document.querySelectorAll('#profileBox .seg').forEach(b => b.classList.toggle('on', b.dataset.profile === store.profile));
+      $('profileText').textContent = PROFILES[store.profile].text;
+      $('autoNew').checked = store.autoNew;
+    }
+
+    function renderHistory() {
+      const rows = $('rows');
+      rows.innerHTML = '';
+      $('clearHistory').hidden = !store.history.length;
+      if (!store.history.length) {
+        rows.innerHTML = '<div class="rows-empty">Finished measurements land here – with “New measurement” or, with “New after a pause”, when you stop and play the next preset. Name them as you go.</div>';
+        return;
+      }
+      store.history.forEach((h, i) => {
+        const s = suggestion(h.lufs, h.peak, h.target);
+        const row = document.createElement('div');
+        row.className = 'row';
+        const time = new Date(h.at);
+        row.innerHTML = '<span class="t"></span><input aria-label="Preset name" placeholder="Preset name"><span class="k"></span><span class="l"></span><span class="s"></span>' +
+          '<button class="x" title="Remove" aria-label="Remove"><span class="ico" style="--icon: var(--ico-close)"></span></button>';
+        row.querySelector('.t').textContent = time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        row.querySelector('.t').title = time.toLocaleString();
+        const input = row.querySelector('input');
+        input.value = h.name || '';
+        input.addEventListener('change', () => { h.name = input.value.trim(); save(); });
+        input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); });
+        row.querySelector('.k').textContent = kindLabel(h.kind) + ' · ' + PROFILES[h.profile].label;
+        row.querySelector('.l').textContent = dbText(h.lufs) + ' LUFS';
+        row.querySelector('.l').title = 'Target ' + dbText(h.target) + ' LUFS, peaks up to ' + dbText(h.peak) + ' dBFS';
+        const sug = row.querySelector('.s');
+        sug.textContent = s.ok ? '✓ on target' : dbText(s.change, true) + ' dB';
+        sug.classList.toggle('ok', s.ok);
+        sug.title = s.ok ? 'Within ' + TOLERANCE + ' LU of the target' : (s.change < 0 ? 'Turn down by ' : 'Turn up by ') + dbText(Math.abs(s.change)) + ' dB';
+        row.querySelector('.x').addEventListener('click', () => { store.history.splice(i, 1); save(); renderHistory(); });
+        rows.appendChild(row);
+      });
+    }
+
+    function render() { renderSource(); renderAdvice(); draw(); }
+    function renderAll() { render(); renderHistory(); }
+
+    // ---- Controls ----
+    KINDS.forEach((k, i) => {
+      const el = document.createElement('div');
+      el.className = 'kind';
+      el.dataset.kind = k.key;
+      const clean = k.key === 'clean';
+      const unit = clean ? 'LUFS' : k.key === 'lead' ? 'dB over Drive' : 'dB over Clean';
+      el.innerHTML = '<span class="nm">' + k.label + '<kbd>' + (i + 1) + '</kbd></span><span class="tg"><input type="text" inputmode="decimal" aria-label="' + k.label +
+        (clean ? ' level in LUFS' : ' step in dB') + '"><span>' + unit + '</span></span><span class="off"></span>';
+      el.title = clean ? 'Clean is the quietest sound: its level in LUFS (key 1)'
+        : k.key === 'lead' ? 'How much louder Lead should sound than Drive (key 5)' : 'How much louder ' + k.label + ' should sound than Clean (key ' + (i + 1) + ')';
+      el.addEventListener('click', () => chooseKind(k.key));
+      el.querySelector('input').addEventListener('change', e => {
+        const value = Number(String(e.target.value).replace(',', '.').replace('−', '-'));
+        if (Number.isFinite(value)) {
+          if (clean) store.base = Math.round(clamp(value, -40, -8) * 10) / 10;
+          else store.steps[k.key] = Math.round(clamp(value, -12, 12) * 10) / 10;
+        }
+        save();
+        e.target.blur();
+        renderAdvice();
+      });
+      $('kinds').appendChild(el);
+    });
+    function chooseKind(key) {
+      if (store.kind === key) return;
+      store.kind = key;
+      save();
+      renderAdvice();
+    }
+    function chooseProfile(profile) {
+      if (store.profile === profile) return;
+      store.profile = profile;
+      save();
+      renderAdvice();
+    }
+    $('scale').innerHTML = [-60, -48, -36, -24, -12, 0].map(db => '<span style="left:' + meterPos(db) + '">' + (db ? '−' + -db : '0') + '</span>').join('');
+    document.querySelectorAll('#profileBox .seg').forEach(b => b.addEventListener('click', () => chooseProfile(b.dataset.profile)));
+    $('restart').addEventListener('click', () => measureRestart(true));
+    $('takeTarget').addEventListener('click', takeTarget);
+    $('autoNew').addEventListener('change', e => { store.autoNew = e.target.checked; save(); renderAdvice(); });
+    $('resetTargets').addEventListener('click', () => {
+      store.base = DEFAULT_BASE;
+      store.steps = { ...DEFAULT_STEPS };
+      save();
+      renderAdvice();
+    });
+    $('clearHistory').addEventListener('click', () => { store.history = []; save(); renderHistory(); });
+    const switchOn = async () => {
+      if (meter.starting) return;
+      if (meter.on) {
+        meterStop();
+        meter.userOff = true;
+        measureRestart(false);
+        render();
+      } else {
+        await meterStart('');
+      }
+    };
+    $('meterToggle').addEventListener('click', switchOn);
+    $('noticeStart').addEventListener('click', () => meterStart(''));
+    $('input').addEventListener('change', async e => {
+      const id = e.target.value;
+      if (!id) return;
+      const chosen = meter.inputs.find(d => d.deviceId === id);
+      if (await meterStart(id) && chosen) { store.input = chosen.label; save(); }
+    });
+    $('pair').addEventListener('change', async e => {
+      if (!meter.on) return;
+      store.pairs[meter.label] = Number(e.target.value);
+      save();
+      await meterStart(meter.deviceId);
+    });
+    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+      navigator.mediaDevices.addEventListener('devicechange', async () => {
+        if (nativeMeter() || !meter.inputs.length) return;   // nothing was allowed yet: the names are not readable
+        try { meter.inputs = await meterInputs(); } catch (e) { return; }
+        renderSource();
+      });
+    }
+    // Space: new measurement, 1-5: sound type, P: profile
+    document.addEventListener('keydown', e => {
+      const el = e.target instanceof Element ? e.target : null;
+      if (e.metaKey || e.ctrlKey || e.altKey || (el && el.closest('input, select, textarea'))) return;
+      if (e.key === ' ' && !(el && el.closest('button'))) { e.preventDefault(); if (meter.on) measureRestart(true); return; }
+      const n = Number(e.key);
+      if (n >= 1 && n <= KINDS.length) { chooseKind(KINDS[n - 1].key); return; }
+      if (e.key === 'p' || e.key === 'P') chooseProfile(store.profile === 'quiet' ? 'rehearsal' : 'quiet');
+    });
+
+    renderAll();
+    // The Mac app opens the Nano right away (macOS asks once); the browser waits for a click, because it asks every time.
+    if (nativeMeter()) meterStart('');
+  </script>
+</body>
+</html>

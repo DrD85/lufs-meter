@@ -1,0 +1,16 @@
+{
+  "name": "lufs-meter",
+  "productName": "LUFS Meter",
+  "version": "1.1.0",
+  "private": true,
+  "description": "LUFS Meter: measures the Nano Cortex's USB sound and suggests by how many dB a preset should change (Mac app of ../index.html)",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "./build.sh"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "electron": "^44.5.1"
+  }
+}

@@ -1,0 +1,6 @@
+.DS_Store
+mac-app/node_modules/
+mac-app/dist/
+mac-app/app/
+release/
+mac-app/native/nano-meter
